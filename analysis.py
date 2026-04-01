@@ -113,3 +113,68 @@ print(f"\nNull values:\n{merged.isnull().sum()}")
 # Save to clean folder
 merged.to_csv('data/clean/etf_returns_with_cycles.csv')
 print("\nSaved to data/clean/etf_returns_with_cycles.csv")
+
+'''
+Part 2: Load data into postgreSQL
+'''
+
+import psycopg2
+from psycopg2.extras import execute_values
+
+# Connect to database
+conn = psycopg2.connect(
+    dbname="sector_etf_analysis",
+    user="aayanverma",
+    host="localhost"
+)
+cur = conn.cursor()
+
+# Load fed_rate_cycles
+fed_clean = pd.read_csv('data/clean/fed_rate_cycles.csv', index_col='date', parse_dates=True)
+fed_clean = fed_clean.reset_index()
+
+fed_rows = [
+    (
+        row['date'].date(),
+        row['fed_funds_rate'],
+        row['rate_change'] if pd.notna(row['rate_change']) else None,
+        int(row['direction']) if pd.notna(row['direction']) else None,
+        row['rolling_direction'] if pd.notna(row['rolling_direction']) else None,
+        row['cycle_type']
+    )
+    for _, row in fed_clean.iterrows()
+]
+
+execute_values(cur, """
+    INSERT INTO fed_rate_cycles (date, fed_funds_rate, rate_change, direction, rolling_direction, cycle_type)
+    VALUES %s
+""", fed_rows)
+
+print(f"Inserted {len(fed_rows)} rows into fed_rate_cycles")
+
+# Load etf_returns
+etf_clean = pd.read_csv('data/clean/etf_returns_with_cycles.csv', index_col='date', parse_dates=True)
+etf_clean = etf_clean.reset_index()
+
+tickers = ['XLE', 'XLF', 'XLI', 'XLK', 'XLP', 'XLU', 'XLV', 'XLY']
+etf_rows = []
+for _, row in etf_clean.iterrows():
+    for ticker in tickers:
+        etf_rows.append((
+            row['date'].date(),
+            ticker,
+            row[ticker],
+            row['cycle_type']
+        ))
+
+execute_values(cur, """
+    INSERT INTO etf_returns (date, ticker, monthly_return, cycle_type)
+    VALUES %s
+""", etf_rows)
+
+print(f"Inserted {len(etf_rows)} rows into etf_returns")
+
+conn.commit()
+cur.close()
+conn.close()
+print("\nDatabase load complete")
