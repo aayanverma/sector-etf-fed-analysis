@@ -48,3 +48,68 @@ print(f"Date range: {etf_prices.index.min()} to {etf_prices.index.max()}")
 etf_prices.to_csv('data/raw/etf_prices_raw.csv')
 print("\nSaved to data/raw/etf_prices_raw.csv")
 
+#Calculate % change over month to month
+etf_returns = etf_prices.pct_change() * 100
+
+#drop first row NaN
+etf_returns = etf_returns.dropna()
+
+print(etf_returns.head(10))
+print(f"\nShape: {etf_returns.shape}")
+
+# Save to raw data folder
+etf_returns.to_csv('data/raw/etf_returns_raw.csv')
+print("\nSaved to data/raw/etf_returns_raw.csv")
+
+'''
+Label Rate Cycles 
+'''
+
+# Calculate month over month change in fed funds rate
+fed_funds['rate_change'] = fed_funds['fed_funds_rate'].diff()
+
+# Label direction: +1 = rising, -1 = falling, 0 = flat
+fed_funds['direction'] = fed_funds['rate_change'].apply(
+    lambda x: 1 if x > 0 else (-1 if x < 0 else 0)
+)
+
+# Rolling sum of last 2 months direction to enforce 2+ consecutive months rule
+fed_funds['rolling_direction'] = fed_funds['direction'].rolling(2).sum()
+
+# Assign cycle type
+def assign_cycle(row):
+    if row['rolling_direction'] >= 2:
+        return 'hiking'
+    elif row['rolling_direction'] <= -2:
+        return 'cutting'
+    else:
+        return 'neutral'
+
+fed_funds['cycle_type'] = fed_funds.apply(assign_cycle, axis=1)
+
+print(fed_funds.head(20))
+print("\nCycle distribution:")
+print(fed_funds['cycle_type'].value_counts())
+
+# Save
+fed_funds.to_csv('data/clean/fed_rate_cycles.csv')
+print("\nSaved to data/clean/fed_rate_cycles.csv")
+
+'''
+Now merge ETF returns with FED cycle labels for one clean dataset
+'''
+
+# Keep only date and cycle_type from fed_funds
+cycle_labels = fed_funds[['cycle_type']]
+
+# Merge on date index
+etf_returns.index.name = 'date'
+merged = etf_returns.merge(cycle_labels, left_index=True, right_index=True, how='left')
+
+print(merged.head(10))
+print(f"\nShape: {merged.shape}")
+print(f"\nNull values:\n{merged.isnull().sum()}")
+
+# Save to clean folder
+merged.to_csv('data/clean/etf_returns_with_cycles.csv')
+print("\nSaved to data/clean/etf_returns_with_cycles.csv")
