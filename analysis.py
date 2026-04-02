@@ -18,35 +18,38 @@ fed_funds = fred.get_series('FEDFUNDS', observation_start='2000-01-01', observat
 
 #convert to dataframe using pandas and clean
 
-fed_funds = fed_funds.to_frame(name = 'fed_funds_rate')
-fed_funds.index.name = 'date'
-fed_funds.index = pd.to_datetime(fed_funds.index)
-
+if os.path.exists('data/raw/fed_funds_raw.csv'):
+    print("Loading fed funds data from local file...")
+    fed_funds = pd.read_csv('data/raw/fed_funds_raw.csv', index_col='date', parse_dates=True)
+else:
+    fed_funds = fred.get_series('FEDFUNDS', observation_start='2000-01-01', observation_end='2024-12-31')
+    fed_funds = fed_funds.to_frame(name='fed_funds_rate')
+    fed_funds.index.name = 'date'
+    fed_funds.index = pd.to_datetime(fed_funds.index)
+    fed_funds.to_csv('data/raw/fed_funds_raw.csv')
 print(fed_funds.head(10))
 print(f"\nShape: {fed_funds.shape}")
 print(f"Date range: {fed_funds.index.min()} to {fed_funds.index.max()}")
-
-
-# Save to raw data folder
-fed_funds.to_csv('data/raw/fed_funds_raw.csv')
-print("\nSaved to data/raw/fed_funds_raw.csv")
+print("\nLoaded fed funds data")
 
 '''
 Pull ETF prices from Yfinance
 '''
 
 tickers = ['XLF', 'XLK', 'XLE', 'XLV', 'XLI', 'XLP', 'XLY', 'XLU']
-etf_data = yf.download(tickers, start='2000-01-01', end='2024-12-31', interval='1mo', auto_adjust=True)
-# Keep only adjusted close prices
-etf_prices = etf_data['Close']
+
+if os.path.exists('data/raw/etf_prices_raw.csv'):
+    print("Loading ETF price data from local file...")
+    etf_prices = pd.read_csv('data/raw/etf_prices_raw.csv', index_col='Date', parse_dates=True)
+else:
+    etf_data = yf.download(tickers, start='2000-01-01', end='2024-12-31', interval='1mo', auto_adjust=True)
+    etf_prices = etf_data['Close']
+    etf_prices.to_csv('data/raw/etf_prices_raw.csv')
 
 print(etf_prices.head(10))
 print(f"\nShape: {etf_prices.shape}")
 print(f"Date range: {etf_prices.index.min()} to {etf_prices.index.max()}")
-
-# Save to raw data folder
-etf_prices.to_csv('data/raw/etf_prices_raw.csv')
-print("\nSaved to data/raw/etf_prices_raw.csv")
+print("\nLoaded ETF price data")
 
 #Calculate % change over month to month
 etf_returns = etf_prices.pct_change() * 100
@@ -148,6 +151,7 @@ fed_rows = [
 execute_values(cur, """
     INSERT INTO fed_rate_cycles (date, fed_funds_rate, rate_change, direction, rolling_direction, cycle_type)
     VALUES %s
+    ON CONFLICT DO NOTHING
 """, fed_rows)
 
 print(f"Inserted {len(fed_rows)} rows into fed_rate_cycles")
@@ -170,6 +174,7 @@ for _, row in etf_clean.iterrows():
 execute_values(cur, """
     INSERT INTO etf_returns (date, ticker, monthly_return, cycle_type)
     VALUES %s
+    ON CONFLICT DO NOTHING
 """, etf_rows)
 
 print(f"Inserted {len(etf_rows)} rows into etf_returns")
@@ -178,3 +183,24 @@ conn.commit()
 cur.close()
 conn.close()
 print("\nDatabase load complete")
+
+
+
+'''
+ETF Long Format for Tableau
+'''
+
+etf_long = merged.reset_index().melt(
+    id_vars=['date', 'cycle_type'],
+    value_vars=tickers,
+    var_name='ticker',
+    value_name='monthly_return'
+)
+
+etf_long = etf_long.sort_values(['date', 'ticker']).reset_index(drop=True)
+
+print(etf_long.head(10))
+print(f"\nShape: {etf_long.shape}")
+
+etf_long.to_csv('data/clean/etf_returns_long.csv', index=False)
+print("\nSaved to data/clean/etf_returns_long.csv")
